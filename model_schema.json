@@ -1,0 +1,56 @@
+{
+    "type": "object",
+    "properties": {
+        "stacks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "blocks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "theta_forecast_dim": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                },
+                                "theta_backcast_dim": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                },
+                                "hidden_dims": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "integer",
+                                        "minimum": 1
+                                    }
+                                },
+                                "multiply": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                }
+                            },
+                            "required": [
+                                "theta_forecast_dim",
+                                "theta_backcast_dim",
+                                "hidden_dims"
+                            ],
+                            "additionalProperties": false
+                        }
+                    },
+                    "multiply": {
+                        "type": "integer",
+                        "minimum": 1
+                    }
+                },
+                "required": ["blocks"],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": [
+        "stacks"
+    ],
+    "additionalProperties": false
+}
