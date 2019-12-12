@@ -1,0 +1,19 @@
+{
+    "stacks": [
+        {
+            "blocks": [
+                {
+                    "theta_forecast_dim": 512,
+                    "theta_backcast_dim": 512,
+                    "hidden_dims": [
+                        512,
+                        512,
+                        512,
+                        512
+                    ]
+                }
+            ],
+            "multiply": 30
+        }
+    ]
+}
