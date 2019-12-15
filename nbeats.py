@@ -2,6 +2,10 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from IPython import embed
+
+# Mask inputs to stacks and block and output (loss)
+
 class Block(nn.Module):
     def __init__(self,
                  forecast_len,
@@ -54,7 +58,7 @@ class Stack(nn.Module):
             self.blocks.extend((Block(forecast_len, backcast_len, block_config["theta_forecast_dim"], block_config["theta_backcast_dim"], block_config["hidden_dims"]) for _ in range(multiply)))
 
     def forward(self, x):
-        forecast = torch.zeros((x.shape[0], self.forecast_len), device=x.get_device())
+        forecast = torch.zeros((x.shape[0], self.forecast_len), device=x.device)
         for block in self.blocks:
             f, b = block(x)
             forecast = forecast + f # += is an inplace operation which affects autograd, so we do forecast = forecast + f instead
@@ -77,7 +81,7 @@ class NBEATS(nn.Module):
 
         
     def forward(self, x):
-        forecast = torch.zeros((x.shape[0], self.forecast_len), device=x.get_device())
+        forecast = torch.zeros((x.shape[0], self.forecast_len), device=x.device)
         for stack in self.stacks:
             f, x = stack(x)
             forecast = forecast + f
@@ -87,21 +91,23 @@ class NBEATS(nn.Module):
 
 class NBEATSLosses:
     @staticmethod
-    def SMAPE(y, y_hat, H):
-        y_copy = y.clone()
-        y_copy[y_copy == 0] = 1
+    def SMAPE(y, y_hat): # Add stop gradient and diff no nan
+        horizon = y.shape[1]
         mask = (y != 0)
-        loss = 200 / H * torch.sum(torch.abs(y - y_hat) / (torch.abs(y_copy) + torch.abs(y_hat)) * mask)
+        y = torch.masked_select(y, mask)
+        y_hat = torch.masked_select(y_hat, mask)
+        loss = 200 * torch.mean(torch.abs(y - y_hat) / (torch.abs(y) + torch.abs(y_hat)))
         return loss
     
     @staticmethod
-    def MAPE(y, y_hat, H):
-        denom = y.clone()
-        denom[denom == 0] = 1
+    def MAPE(y, y_hat): # Add diff no nan
+        horizon = y.shape[1]
         mask = (y != 0)
-        loss = 100 / H * torch.sum(torch.abs(y - y_hat) / torch.abs(denom) * mask)
+        y = torch.masked_select(y, mask)
+        y_hat = torch.masked_select(y_hat, mask)
+        loss = 100 * torch.mean(torch.abs(y - y_hat) / torch.abs(y))
         return loss
     
     @staticmethod
-    def MASE(y, y_hat, H):
+    def MASE(y, y_hat):
         raise NotImplementedError

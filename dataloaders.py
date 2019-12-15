@@ -5,6 +5,12 @@ import numpy as np
 import pandas as pd
 import torch
 
+from IPython import embed
+
+# Implement naive predictor (extend last value). Naive is 20
+# This tests 2 things: How we load the dataset, correct split, correct metric definition
+# Match against M3/M4
+
 class MDataset(torch.utils.data.Dataset):
     TRAIN_FOR_VALIDATION = 0
     TRAIN_FOR_TEST = 1
@@ -17,54 +23,57 @@ class MDataset(torch.utils.data.Dataset):
         self.dataset_type = dataset_type
         self.L = L
         
-        self.data = torch.from_numpy(np.load(path)).float()
-        self.data_len = self.data.shape[0]
-        self.ts_len = self.data.shape[1]
+        self.data = np.load(path)
+        self.data_len, self.ts_len = self.data.shape
         
     def __getitem__(self, idx):
-        n_y = None # The number forecast samples during training. Since we pick a random point, it may be less than the horizon length.
-        
-        if self.dataset_type == MDataset.TRAIN_FOR_VALIDATION:
-            # Ignore the actual index during training, we set it to a random idx in the dataset
-            idx = np.random.randint(self.data_len)
-            anchor_idx = np.random.randint(2 * self.horizon + 1, 2 * self.horizon + self.L + 1)
-            n_y = min(anchor_idx - 2 * self.horizon, self.horizon)
-            
-        elif self.dataset_type == MDataset.TRAIN_FOR_TEST:
-            # Ignore the actual index during training, we set it to a random idx in the dataset
-            idx = np.random.randint(self.data_len)
-            # anchor_idx = np.random.randint(self.horizon + 1, self.horizon + self.L + 1)
-            # n_y = min(anchor_idx - self.horizon, self.horizon)
-            anchor_idx =  2 * self.horizon
+        x, y = np.zeros(self.lookback), np.zeros(self.horizon)
 
+        if self.dataset_type in (MDataset.TRAIN_FOR_VALIDATION, MDataset.TRAIN_FOR_TEST):
+            idx = np.random.randint(self.data_len)
+            ts = self.data[idx].copy()
+            nan_indices = np.argwhere(np.isnan(ts)).ravel()
+            start_idx = nan_indices[-1] + 1 if nan_indices.shape[0] else 0
+            
+            if self.dataset_type == MDataset.TRAIN_FOR_VALIDATION:
+                L = np.minimum(self.L, self.ts_len - 2 * self.horizon)
+                anchor_idx = np.random.randint(2 * self.horizon + 1, 2 * self.horizon + L + 1)
+                x_start_idx = min(anchor_idx + self.lookback, self.ts_len - start_idx)
+                y_end_idx = max(anchor_idx - self.horizon, 2 * self.horizon)
+            else:
+                L = np.minimum(self.L, self.ts_len - self.horizon - start_idx - 1)
+                anchor_idx = np.random.randint(self.horizon + 1, self.horizon + L + 1)
+                x_start_idx = min(anchor_idx + self.lookback, self.ts_len - start_idx)
+                y_end_idx = max(anchor_idx - self.horizon, self.horizon)
+
+
+            x[anchor_idx - x_start_idx:] = ts[-x_start_idx : -anchor_idx]
+            y[:anchor_idx - y_end_idx] = ts[-anchor_idx : -y_end_idx]
+        
         elif self.dataset_type == MDataset.VALIDATION:
+            ts = self.data[idx].copy()
+            nan_indices = np.argwhere(np.isnan(ts)).ravel()
+            start_idx = nan_indices[-1] + 1 if nan_indices.shape[0] else 0
             anchor_idx = 2 * self.horizon
-            
-        elif self.dataset_type == MDataset.TEST:
-            anchor_idx = self.horizon
-        
-        # Make sure to clone here so we don't modify original data source
-        x = self.data[idx, self.ts_len - anchor_idx - self.lookback : self.ts_len - anchor_idx].clone()
-        y = self.data[idx, self.ts_len - anchor_idx : self.ts_len - anchor_idx + self.horizon].clone()
-        
-        if (x != x).all():
-            print('x')
-            embed()
-        if (y != y).all():
-            print('y')
-            embed()
+            x_start_idx = min(anchor_idx + self.lookback, self.ts_len - start_idx)
+            y_end_idx = self.horizon
 
-        x[x != x] = 0
-        y[y != y] = 0
+            x[anchor_idx - x_start_idx:] = ts[-x_start_idx : -anchor_idx]
+            y[:] = ts[-anchor_idx : -y_end_idx]
         
-        if x.shape[0] < self.lookback:
-            x = torch.cat((torch.zeros(self.lookback - x.shape[0]), x))
-        
-        # If training, we need to zero out samples after the first n_y samples because they seep into the validation or test sets. 
-        if n_y:
-            y[(self.horizon - n_y):] = 0
-        
-        return x, y
+        elif self.dataset_type == MDataset.TEST:
+            ts = self.data[idx].copy()
+            nan_indices = np.argwhere(np.isnan(ts)).ravel()
+            start_idx = nan_indices[-1] + 1 if nan_indices.shape[0] else 0
+            anchor_idx = self.horizon
+            x_start_idx = min(anchor_idx + self.lookback, self.ts_len - start_idx)
+
+            x[anchor_idx - x_start_idx:] = ts[-x_start_idx : -anchor_idx]
+            y[:] = ts[-anchor_idx:]
+    
+
+        return torch.tensor(x).float(), torch.tensor(y).float()
+
     
     def __len__(self):
         if self.dataset_type == MDataset.VALIDATION or self.dataset_type == MDataset.TEST:
@@ -77,7 +86,7 @@ class M4Dataset(MDataset):
     """A PyTorch dataset for M4.
     """
     
-    HORIZONS = ['Yearly', 'Quarterly', 'Monthly', 'Weekly', 'Daily', 'Hourly']
+    HORIZONS = dict(Yearly=6, Quarterly=8, Monthly=18, Weekly=13, Daily=14, Hourly=48)
     
     @staticmethod
     def convert_csv_to_npy(train_dir, test_dir, output_dir):
@@ -115,7 +124,7 @@ class M4Dataset(MDataset):
 
 class M3Dataset(MDataset):
     
-    HORIZONS = ['M3Year', 'M3Quart', 'M3Month', 'M3Other']
+    HORIZONS = dict(M3Year=6, M3Quart=8, M3Month=18, M3Other=8)
     
     @staticmethod
     def convert_xls_to_npy(path, output_dir):
@@ -148,8 +157,35 @@ class M3Dataset(MDataset):
     def __len__(self):
         return super().__len__()
 
+
+class DummyDataset(MDataset):
+    @staticmethod
+    def generate_dummy_data(output_dir, number_of_ts=2048, length_of_ts=100):
+        if not os.path.isdir(output_dir):
+            os.mkdir(output_dir)
+
+        linspace = np.linspace(0, 30, length_of_ts)
+        matrix = linspace.copy()
+        for _ in range(number_of_ts - 1):
+            matrix = np.vstack((matrix, linspace))
+
+        data = np.cos(2 * np.random.randint(low=1, high=3, size=(nu/mber_of_ts, length_of_ts)) * np.pi * matrix)
+        data += np.cos(2 * np.random.randint(low=2, high=4, size=(number_of_ts, length_of_ts)) * np.pi * matrix)
+        data += matrix + np.random.rand(number_of_ts, length_of_ts) * 0.1
+
+        np.save(os.path.join(output_dir, 'dummy.npy'), data)
+        
+    def __init__(self, path, horizon, lookback, dataset_type, L=None):
+        super().__init__(path, horizon, lookback, dataset_type, L)
+        
+    def __getitem__(self, idx):
+        return super().__getitem__(idx)
+        
+    def __len__(self):
+        return super().__len__()
+
 if __name__ == '__main__':
     M3Dataset.convert_xls_to_npy(r'data/M3/M3C.xls', output_dir=r'data/M3/npy')
-    M4Dataset.convert_csv_to_npy(train_dir=r'data/M4/Train',
-                                 test_dir=r'data/M4/Test',
-                                 output_dir=r'data/M4/npy')
+    M4Dataset.convert_csv_to_npy(train_dir=r'data/M4/Train', test_dir=r'data/M4/Test', output_dir=r'data/M4/npy')
+    DummyDataset.generate_dummy_data(r'data/Dummy/npy')
+    
