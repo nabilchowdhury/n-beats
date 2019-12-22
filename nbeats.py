@@ -2,9 +2,6 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from IPython import embed
-
-# Mask inputs to stacks and block and output (loss)
 
 class Block(nn.Module):
     def __init__(self,
@@ -27,7 +24,7 @@ class Block(nn.Module):
         self.fc_forecast_basis = nn.Linear(theta_forecast_dim, forecast_len)
         self.fc_backcast_basis = nn.Linear(theta_backcast_dim, backcast_len)
     
-    def forward(self, x):
+    def forward(self, x, x_mask, y_mask):
         # Pass x through the fc layers
         for fc in self.fcs:
             x = F.relu(fc(x))
@@ -40,7 +37,10 @@ class Block(nn.Module):
         forecast = self.fc_forecast_basis(theta_forecast)
         backcast = self.fc_backcast_basis(theta_backcast)
         
-        return forecast, backcast
+        if x_mask is not None:
+            return forecast * y_mask, backcast * x_mask
+        else:
+            return forecast, backcast
 
 class Stack(nn.Module):
     def __init__(self,
@@ -57,10 +57,10 @@ class Stack(nn.Module):
             multiply = block_config.get('multiply', 1)
             self.blocks.extend((Block(forecast_len, backcast_len, block_config["theta_forecast_dim"], block_config["theta_backcast_dim"], block_config["hidden_dims"]) for _ in range(multiply)))
 
-    def forward(self, x):
+    def forward(self, x, x_mask, y_mask):
         forecast = torch.zeros((x.shape[0], self.forecast_len), device=x.device)
         for block in self.blocks:
-            f, b = block(x)
+            f, b = block(x, x_mask, y_mask)
             forecast = forecast + f # += is an inplace operation which affects autograd, so we do forecast = forecast + f instead
             x = x - b
         
@@ -80,10 +80,10 @@ class NBEATS(nn.Module):
             self.stacks.extend(Stack(forecast_len, backcast_len, stack_config) for _ in range(multiply))
 
         
-    def forward(self, x):
+    def forward(self, x, x_mask, y_mask):
         forecast = torch.zeros((x.shape[0], self.forecast_len), device=x.device)
         for stack in self.stacks:
-            f, x = stack(x)
+            f, x = stack(x, x_mask, y_mask)
             forecast = forecast + f
         
         return forecast
@@ -96,7 +96,7 @@ class NBEATSLosses:
         mask = (y != 0)
         y = torch.masked_select(y, mask)
         y_hat = torch.masked_select(y_hat, mask)
-        loss = 200 * torch.mean(torch.abs(y - y_hat) / (torch.abs(y) + torch.abs(y_hat)))
+        loss = 200 * torch.mean(torch.abs(y - y_hat) / (torch.abs(y) + torch.abs(y_hat).detach())) # Detach, or else backprop gets weird
         return loss
     
     @staticmethod
